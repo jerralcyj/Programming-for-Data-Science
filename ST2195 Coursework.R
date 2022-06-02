@@ -1,0 +1,313 @@
+library(tidyverse)
+library(ggplot2)
+library(scales)
+library(lubridate)
+
+#Deleting column code
+#df_airplaneAge<- select(df_airplaneAge, -Plane_Age)
+
+#Reading csv files
+carriers <- read.csv("carriers.csv", header = TRUE, sep = ",")
+plane_data <- read.csv("plane-data.csv", header = TRUE, sep = ",")
+airports <- read.csv("airports.csv", header = TRUE, sep = ",")
+year_2000 <- read.csv("2000.csv", header = TRUE, sep = ",")
+year_2001 <- read.csv("2001.csv", header = TRUE, sep = ",")
+year_2002 <- read.csv("2002.csv", header = TRUE, sep = ",")
+
+#Combine all years together into one big df called df_combined
+df_combined <- rbind(year_2000, year_2001, year_2002)
+
+#Cleaning empty data in plane_data
+#Source -> https://stackoverflow.com/questions/49051215/r-remove-blanks-from-data-frame
+plane_data <- plane_data[-which(plane_data$type==""),]
+plane_data <- filter(plane_data, year != "None")
+plane_data <- filter(plane_data, year <= "2002")
+
+#Changing to date format for filtering after this
+plane_data$issue_date <- as.Date(plane_data$issue_date, "%m/%d/%Y")
+
+#Filtering issue dates that are before 01 Jan 2003
+#Source -> https://blog.exploratory.io/filter-with-date-function-ce8e84be680
+plane_data <- plane_data %>%
+  select(tailnum, type, manufacturer, issue_date, model, status, aircraft_type, engine_type, year) %>%
+  filter(issue_date <= as.Date("2003-01-01"))
+plane_data$year <- as.numeric(plane_data$year)
+plane_data <- rename(plane_data, year_built = year)
+
+#Re-indexing the row numbers
+rownames(plane_data) <- 1:nrow(plane_data)
+
+#Renaming columns to inner join
+plane_data <- rename(plane_data, TailNum = tailnum)
+carriers <- rename(carriers, UniqueCarrier = Code)
+
+#Inner join plane_data into df_combined
+df_combined <- df_combined %>% inner_join(plane_data)
+df_combined <- df_combined %>% inner_join(carriers)
+
+
+
+
+
+#Q1: When is the best time of day, day of the week, and time of year to fly to minimise delays? 
+
+#Create new data frame, df_best
+df_best <- df_combined[, c("Year", "Month", "DayofMonth", "DayOfWeek", "DepTime", "ArrTime", "ArrDelay", "DepDelay")]
+
+#Remove NA values from data frame
+df_best <- na.omit(df_best)
+
+#Changing from numeric to time format
+#Source -> https://stackoverflow.com/questions/21003657/converting-numbers-to-time
+df_best$DepTime <- substr(as.POSIXct(sprintf("%04.0f", df_best$DepTime), format='%H%M'), 12, 16)
+df_best$ArrTime <- substr(as.POSIXct(sprintf("%04.0f", df_best$ArrTime), format='%H%M'), 12, 16)
+
+#Get day name from day of week
+#Source -> https://www.statology.org/r-day-of-week/
+#Using lubridate to use wday
+df_best$DayOfWeek <- wday(df_best$DayOfWeek, week_start = 1, label=TRUE, abbr=FALSE)
+
+#Create new column DelayStatus, TotalDelay, Time Classification and Season
+df_best <- df_best %>%
+  add_column(DelayStatus = "", .after = "DepDelay")
+
+df_best <- df_best %>%
+  add_column(Season = "", .after = "DayOfWeek")
+
+df_best <- df_best %>%
+  add_column(TimeClass = "", .after = "DayOfWeek")
+
+#Source -> https://www.datasciencemadesimple.com/case-statement-r-using-case_when-dplyr/
+#Factoring in the 15 min grace period, assuming that it is already taken into account in the data
+#Source -> https://en.wikipedia.org/wiki/Flight_cancellation_and_delay#:~:text=A%20flight%20delay%20is%20when,all%20for%20a%20certain%20reason
+df_best <- df_best %>%
+  mutate(DelayStatus = case_when(DepDelay >= 15 ~ "Delayed",
+                                 DepDelay == 0 ~ "On Time",
+                                 TRUE ~ "Early"))
+
+df_best$DelayStatus <- as.factor(df_best$DelayStatus)
+df_best$DelayStatus <- factor(df_best$DelayStatus, levels = c("Early", "On Time", "Delayed"))
+
+#Source -> https://stackoverflow.com/questions/64465477/alternative-to-nested-ifelse-statement-assign-seasons-to-month?rq=1
+df_best <- df_best %>%
+  mutate(Season = case_when(Month %in% 3:5 ~ "Spring",
+                            Month %in% 6:8 ~ "Summer",
+                            Month  %in%  9:11 ~ "Autumn",
+                            TRUE ~ "Winter"))
+
+df_best$Season <- as.factor(df_best$Season)
+df_best$Season <- factor(df_best$Season, levels = c("Spring", "Summer", "Autumn", "Winter"))
+
+#Using DepTime as the reference for the time period
+df_best <- df_best %>%
+  mutate(TimeClass = case_when(DepTime >= "06:00" & DepTime <= "11:59" ~ "Morning",
+                               DepTime >= "12:00" & DepTime <= "16:59" ~ "Afternoon",
+                               DepTime >= "17:00" & DepTime <= "19:59" ~ "Evening",
+                               TRUE ~ "Night"))
+
+df_best$TimeClass <- as.factor(df_best$TimeClass)
+df_best$TimeClass <- factor(df_best$TimeClass, levels = c("Morning", "Afternoon", "Evening", "Night"))
+
+#Plots
+#Using ggplot2 and scales
+#Source -> https://www.geeksforgeeks.org/change-color-of-bars-in-barchart-using-ggplot2-in-r/
+#Source -> https://stackoverflow.com/questions/61232067/print-count-value-in-geom-label
+ggplot(df_best, aes(x = DelayStatus, fill = TimeClass)) + 
+  geom_bar(position = "dodge", stat="count") +
+  geom_label(stat = "count", aes(label = ..count..), position= position_dodge(width=0.9), vjust = -0.25, show.legend = FALSE) +
+  ggtitle("Delay Status by Time of Day") + 
+  xlab("Delay Status") + ylab("Count") + 
+  labs(fill = "Time Of Day") + 
+  scale_y_continuous(labels = comma)
+  
+ggplot(df_best, aes(x = DelayStatus, fill = DayOfWeek)) + 
+  geom_bar(position = "dodge", stat="count") +
+  geom_label(stat = "count", aes(label = ..count..), position= position_dodge(width=0.9), vjust = -0.25, show.legend = FALSE) +
+  ggtitle("Delay Status by Day Of Week") + 
+  xlab("Delay Status") + ylab("Count") + 
+  labs(fill = "Day of Week") + 
+  scale_y_continuous(labels = comma) +
+  scale_fill_manual(values = c("#f54287",
+                               "#8fce00",
+                               "#f1c232",
+                               "#9fc5e8",
+                               "#d49fe8",
+                               "#d3ffce",
+                               "#3399ff"))
+
+ggplot(df_best, aes(x = DelayStatus, fill = Season)) + 
+  geom_bar(position = "dodge", stat="count") +
+  geom_label(stat = "count", aes(label = ..count..), position= position_dodge(width=0.9), vjust = -0.25, show.legend = FALSE) +
+  ggtitle("Delay Status by Season") +
+  xlab("Delay Status") + ylab("Count") +
+  labs(fill = "Season") +
+  scale_y_continuous(labels = comma)
+  
+  
+#Q2: Do older planes suffer more delays? 
+#Creating new column DelayStatus
+df_airplaneAge <- df_combined [, c("Year", "DepDelay", "year_built")]
+df_airplaneAge <- df_airplaneAge %>%
+  add_column(DelayStatus = "", .after = "DepDelay")
+  
+##Source -> https://www.datasciencemadesimple.com/case-statement-r-using-case_when-dplyr/
+df_airplaneAge <- df_airplaneAge %>%
+  mutate(DelayStatus = case_when(DepDelay >= 15 ~ "Delayed",
+                                 DepDelay == 0 ~ "On Time",
+                                 TRUE ~ "Early"))
+  
+df_airplaneAge <- na.omit(df_airplaneAge)
+df_airplaneAge$DelayStatus <- as.factor(df_airplaneAge$DelayStatus)
+df_airplaneAge$DelayStatus <- factor(df_airplaneAge$DelayStatus, levels = c("Early", "On Time", "Delayed"))
+
+#Source -> https://www.marsja.se/how-to-concatenate-two-columns-or-more-in-r-stringr-tidyr/
+#Creating new column, Plane_Age and finding the age of plane
+df_airplaneAge <- df_airplaneAge %>%
+  add_column(Plane_Age = "", .after = "year_built")
+  
+df_airplaneAge$Plane_Age <- df_airplaneAge$Year - df_airplaneAge$year_built
+  
+df_airplaneAge <- df_airplaneAge %>%
+  mutate(Plane_Age_Range = case_when(Plane_Age %in% 0:10 ~ "0-10",
+                                     Plane_Age %in% 11:20 ~ "11-20",
+                                     TRUE ~ "20+"))
+df_airplaneAge$Plane_Age_Range <- as.factor(df_airplaneAge$Plane_Age_Range)
+df_airplaneAge$Plane_Age_Range <- factor(df_airplaneAge$Plane_Age_Range, levels = c("0-10", "11-20", "20+"))
+
+#Plotting of graph
+ggplot(df_airplaneAge, aes(x = Plane_Age_Range, fill = DelayStatus)) + 
+  geom_bar(position = "dodge", stat="count") +
+  geom_label(stat = "count", aes(label = ..count..), position= position_dodge(width=0.9), vjust = -0.25, show.legend = FALSE) +
+  ggtitle("Plane Age against Delay Status") + 
+  xlab("Plane Age Range") + ylab("Count") + 
+  labs(fill = "Delay Status") + 
+  scale_y_continuous(labels = comma)
+
+#Q3: How does the number of people flying between different locations change over time?
+df_people <- df_combined [, c("Year", "Month", "Origin", "Dest")]
+airports <- rename(airports, Origin = iata)
+df_people <- df_people %>% inner_join(airports)
+df_people <- rename(df_people, OriAirport = airport)
+
+df_people <- df_people %>%
+  mutate(Month = case_when(Month == 1 ~ "Jan",
+                           Month == 2 ~ "Feb",
+                           Month == 3 ~ "Mar",
+                           Month == 4 ~ "Apr",
+                           Month == 5 ~ "May",
+                           Month == 6 ~ "Jun",
+                           Month == 7 ~ "Jul",
+                           Month == 8 ~ "Aug",
+                           Month == 9 ~ "Sep",
+                           Month == 10 ~ "Oct",
+                           Month == 11 ~ "Nov",
+                           TRUE ~ "Dec"))
+
+df_people$Month <- factor(df_people$Month, levels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"))
+
+#Count the number of flights from each Origin
+flight_count <- df_people %>%
+  count(Origin) %>%
+  arrange(desc(n))
+flight_count
+
+#Choose ATL(Atlanta) as the origin, since it has the highest flight count, and filtering the other Origins out
+df_people <- filter(df_people, Origin == "ATL")
+
+#Count the number of flights from ATL(Atlanta) to each Destination
+dest_count <- df_people %>%
+  count(Dest) %>%
+  arrange(desc(n)) %>%
+  slice(1:3)
+dest_count
+
+#Filter out the other Origins except EWR, LGA and ORD
+remove_dest <- c("EWR", "LGA", "ORD")
+df_people <- filter(df_people, Dest %in% remove_dest)
+
+#Plotting of bar plot
+ggplot(df_people, aes(x = Month, fill = Dest)) + 
+  geom_bar(position = "dodge", stat="count") +
+  geom_label(stat = "count", aes(label = ..count..), position= position_dodge(width=0.9), vjust = -0.25, show.legend = FALSE) +
+  ggtitle("Number of Flights per Month from ATL(Atlanta)") + 
+  xlab("Month") + ylab("Number Of Flights") + 
+  labs(fill = "Destination") + 
+  scale_y_continuous(labels = comma)
+
+#Q4: Can you detect cascading failures as delays in one airport create delays in others?
+#Create new data frame, df_cascading_dest
+df_cascading_dest <- df_combined[, c("Year", "Month", "DayofMonth", "FlightNum", "TailNum", "CRSDepTime", "DepTime", "DepDelay", "CRSArrTime", "ArrTime", "ArrDelay", "Origin", "Dest")]
+df_cascading_dest <- filter(df_cascading_dest, DepDelay >= 15)
+df_cascading_dest <- filter(df_cascading_dest, ArrDelay > 0)
+
+#Count the number of flights to each Destination(ATL)
+cascading_dest_count <- df_cascading_dest %>%
+  count(Dest) %>%
+  arrange(desc(n))
+
+#Choose ATL(Atlanta) as the destination, since it has the highest flight delay count, and filtering the other destinations out
+df_cascading_dest <- filter(df_cascading_dest, Dest == "ATL")
+
+
+##Create new data frame, df_cascading_origin
+df_cascading_origin <- df_combined[, c("Year", "Month", "DayofMonth", "FlightNum", "TailNum", "CRSDepTime", "DepTime", "DepDelay", "CRSArrTime", "ArrTime", "ArrDelay", "Origin", "Dest")]
+df_cascading_origin <- filter(df_cascading_origin, DepDelay >= 15)
+df_cascading_origin <- filter(df_cascading_origin, ArrDelay > 0)
+
+
+#Choose ATL(Atlanta) as the origin, since it has the highest flight delay count, and filtering the other Origin out
+df_cascading_origin <- filter(df_cascading_origin, Origin == "ATL")
+
+#Full Join the 2 tables
+cascading_main <- df_cascading_dest %>% full_join(df_cascading_origin)
+cascading_main <- arrange(cascading_main, Year, Month, DayofMonth, TailNum)
+cascading_main <- cascading_main %>% 
+  group_by(TailNum)
+
+#Changing from numeric to time format
+#Source -> https://stackoverflow.com/questions/21003657/converting-numbers-to-time
+cascading_main$DepTime <- substr(as.POSIXct(sprintf("%04.0f", cascading_main$DepTime), format='%H%M'), 12, 16)
+cascading_main$ArrTime <- substr(as.POSIXct(sprintf("%04.0f", cascading_main$ArrTime), format='%H%M'), 12, 16)
+cascading_main$CRSDepTime <- substr(as.POSIXct(sprintf("%04.0f", cascading_main$CRSDepTime), format='%H%M'), 12, 16)
+cascading_main$CRSArrTime <- substr(as.POSIXct(sprintf("%04.0f", cascading_main$CRSArrTime), format='%H%M'), 12, 16)
+cascading_main
+
+#Q5 Use the available variables to construct a model that predicts delays.
+#Load data
+#Select 50 flights at random
+library(caTools)
+set.seed(1)
+ml_delay <- data.frame(df_combined)
+ml_delay<- select(ml_delay, -CancellationCode, -CarrierDelay, -WeatherDelay, -NASDelay, -SecurityDelay, -LateAircraftDelay, -type, -manufacturer, -issue_date, -model, -status, -aircraft_type, -engine_type, -year_built, -Description)
+  ml_delay <- ml_delay %>%
+  filter(!is.na(DepDelay) & !is.na(ArrDelay)) %>%
+  sample_n(50)
+
+#Plotting out linear Regression
+#Scatterplot
+plot(x = ml_delay$DepDelay, y = ml_delay$ArrDelay, main = "Scatterplot of DepTime vs ArrTime")
+
+#Linear Regression Plot
+ggplot(data = ml_delay, mapping = aes(x = DepDelay, y = ArrDelay)) + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  ggtitle("Linear Regression between DepDelay and ArrDelay")
+df_delayFit <- lm(ArrDelay ~ DepDelay, data = ml_delay)
+summary(df_delayFit)
+
+#Train-Test Split
+#70% trainset, sample size = 50
+train <- sample.split(Y = ml_delay$ArrDelay, SplitRatio = 0.7)
+trainset <- subset(ml_delay, train == T)
+testset <- subset(ml_delay, train == F)
+
+#Develop model on trainset
+train_model <- lm(ArrDelay ~ DepDelay + I(DepDelay^2), data = trainset)
+summary(train_model)
+
+#Apply train_model from trainset to predict on testset.
+predict_test<- predict(train_model, newdata = testset)
+error_test <- testset$ArrDelay - predict_test
+
+
+
