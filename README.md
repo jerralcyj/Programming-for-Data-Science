@@ -8,4 +8,4 @@ The questions we had to answer are:
 4. Can you detect cascading failures as delays in one airport create delays in others?
 5. Use the available varaibles to construct a model that predicts delays.
 
-The task was to compelete our analysis using both Python and R.
+The task was to compelete the analysis using both Python and R. I used the data set for 2000 to 2002 for my analysis.
