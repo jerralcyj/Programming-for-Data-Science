@@ -6,6 +6,6 @@ The questions we have to answer are:
 2. Do older planes suffer more delays?
 3. How does the number of people flying between different locations change over time?
 4. Can you detect ccascading failures as delays in one airport create delays in others?
-5. Use the available varaibles to construct a model taht predicts delays.
+5. Use the available varaibles to construct a model that predicts delays.
 
 
