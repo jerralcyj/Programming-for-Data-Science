@@ -1,6 +1,6 @@
 # Description of Coursework
 This coursework involves using the yearly data set from the 2009 ASA Statistical Computing and Graphics Data Expo, consisting of flight and departure details for all commercial flights on major carriers within the USA.
-The questions we have to answer are:
+The questions we had to answer are:
 
 1. When is the best time of day, day of the week, and time of year to fly to minimise delays?
 2. Do older planes suffer more delays?
